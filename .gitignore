@@ -1,0 +1,47 @@
+/autom4te.cache/
+/build-aux/
+/m4/lt~obsolete.m4
+/m4/lt*.m4
+/m4/libtool.m4
+Makefile
+Makefile.in
+/aclocal.m4
+/config.guess
+/config.h
+/config.h.in
+/config.log
+/config.status
+/config.sub
+/configure
+/depcomp
+/install-sh
+/libtool
+/ltmain.sh
+/missing
+/stamp-h1
+.deps/
+.libs/
+*.lo
+*.la
+*.o
+*.a
+ChangeLog
+compile
+
+# Debian packaging build artifacts (debian/control etc. are tracked)
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.log
+/debian/*.substvars
+/debian/xfce4-mediaplayer-plugin/
+/debian/xfce4-mediaplayer-plugin-dbgsym/
+/debian/tmp/
+
+# dpkg-buildpackage output lands one directory up by convention, but
+# ignore it here too in case anyone builds with --no-sign in-tree
+/*.deb
+/*.ddeb
+/*.buildinfo
+/*.changes
+

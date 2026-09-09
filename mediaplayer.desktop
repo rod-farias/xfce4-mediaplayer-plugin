@@ -1,0 +1,10 @@
+[Xfce Panel]
+Type=X-XFCE-PanelPlugin
+Icon=multimedia-player
+Name=Media Player
+Comment=Control music playback (MPRIS) from the panel
+X-XFCE-Module=mediaplayer
+X-XFCE-Category=Multimedia
+X-XFCE-Unique=false
+X-XFCE-API=2.0
+X-XFCE-Internal=FALSE

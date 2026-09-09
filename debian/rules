@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+# xfce4-panel only looks for plugin modules in its multiarch-aware
+# system libdir (e.g. /usr/lib/x86_64-linux-gnu/xfce4/panel/plugins/),
+# never in a plain /usr/lib/ -- make sure --libdir matches that
+# exactly, since a default autotools libdir would put the .so where
+# the panel never looks.
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- --libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) --disable-static
+
+# it's a dlopen()'d panel module, not a linkable library -- drop the
+# static archive and libtool metadata file, neither of which anyone
+# will ever link against.
+override_dh_auto_install:
+	dh_auto_install
+	find debian/xfce4-mediaplayer-plugin \( -name '*.la' -o -name '*.a' \) -delete

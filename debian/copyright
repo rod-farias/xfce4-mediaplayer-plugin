@@ -1,0 +1,11 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: xfce4-mediaplayer-plugin
+Source: locally developed, not published upstream
+
+Files: *
+Copyright: 2026 Rodrigo <rodrigo@ffr.cl>
+License: proprietary
+
+License: proprietary
+ All rights reserved. This package is built and distributed privately
+ by its author; no open-source license has been assigned to it.

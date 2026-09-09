@@ -1,0 +1,27 @@
+Source: xfce4-mediaplayer-plugin
+Section: xfce
+Priority: optional
+Maintainer: Rodrigo <rodrigo@ffr.cl>
+Build-Depends: debhelper-compat (= 13),
+               pkgconf,
+               libglib2.0-dev,
+               libgtk-3-dev,
+               libxfce4panel-2.0-dev,
+               libxfce4ui-2-dev,
+               xfce4-dev-tools
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: xfce4-mediaplayer-plugin
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, xfce4-panel (>= 4.16.0)
+Description: MPRIS media player control plugin for the Xfce panel
+ A panel plugin for xfce4-panel that controls music playback over
+ MPRIS/D-Bus. Works with any player exposing the
+ org.mpris.MediaPlayer2 interface -- Spotify, VLC, Rhythmbox,
+ browsers, mpv and others -- with no per-application integration
+ required.
+ .
+ Shows the current track's title/artist/album, optional album art,
+ a progress bar with elapsed/total time, and previous/play-pause/next
+ controls, all configurable from the plugin's own preferences dialog.
