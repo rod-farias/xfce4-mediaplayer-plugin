@@ -37,6 +37,14 @@ compile
 /debian/xfce4-mediaplayer-plugin/
 /debian/xfce4-mediaplayer-plugin-dbgsym/
 /debian/tmp/
+# dh_autoreconf's before/after file-manifest snapshots, left behind by
+# an interrupted or manually-run `dpkg-buildpackage`/`debian/rules`
+/debian/autoreconf.before
+/debian/autoreconf.after
+
+# autoreconf/autotools backup files (created when re-running
+# ./configure or autoreconf over already-generated output)
+*~
 
 # dpkg-buildpackage output lands one directory up by convention, but
 # ignore it here too in case anyone builds with --no-sign in-tree
