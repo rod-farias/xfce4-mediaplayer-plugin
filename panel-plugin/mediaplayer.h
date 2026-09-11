@@ -24,6 +24,7 @@ struct _MediaplayerPlugin
   GtkWidget *btn_next;
   GtkWidget *img_play_pause;
   GtkWidget *text_box;
+  GtkWidget *info_ebox;
   GtkWidget *info_row;
   GtkWidget *label;
   GtkWidget *progress_label;
@@ -41,8 +42,24 @@ struct _MediaplayerPlugin
   gchar *art_cache_url;
   gint   art_cache_size;
 
-  gchar *last_label_text;
-  guint  no_player_timer_id;
+  gchar    *last_label_text;
+  gboolean  has_last_text;
+  guint     no_player_timer_id;
+
+  /* art and the progress/time indicator each get their own grace
+   * state, independent of the text's and of each other: some players
+   * publish the new track's title/artist before its album art has
+   * finished loading, or before its duration is known, so gating
+   * art/progress on the same signal as the text (or on each other)
+   * would still flash them empty during that window. Each grace state
+   * is owned and checked by its own update function, since the
+   * progress indicator is also refreshed by a periodic tick outside
+   * of mediaplayer_update_ui(). */
+  gboolean has_last_art;
+  guint    art_grace_timer_id;
+
+  gboolean has_last_progress;
+  guint    progress_grace_timer_id;
 
   guint progress_timer_id;
 
@@ -59,6 +76,9 @@ struct _MediaplayerPlugin
 #define MEDIAPLAYER_ART_MAX_SIZE       64
 #define MEDIAPLAYER_ART_MARGIN         4
 
+/* size (px) of the enlarged album art shown in the hover preview */
+#define MEDIAPLAYER_ART_PREVIEW_SIZE   256
+
 /* fixed width (in characters) of the elapsed/total time indicator,
  * so it doesn't shift the layout as the digits change */
 #define MEDIAPLAYER_PROGRESS_TIME_WIDTH_CHARS 11
@@ -68,9 +88,10 @@ struct _MediaplayerPlugin
  * tall it visually overwhelms a single text line */
 #define MEDIAPLAYER_PROGRESS_BAR_HEIGHT 20
 
-/* how long to keep showing the previous track's text across a gap
- * with no metadata (e.g. the brief moment between tracks) before
- * falling back to "No player" */
+/* how long to keep showing the previous track's art, time and text
+ * across a gap with no metadata (e.g. the brief moment between
+ * tracks, or while Previous/Next is still being processed by the
+ * player) before falling back to the empty "No player" state */
 #define MEDIAPLAYER_NO_PLAYER_GRACE_SECONDS 3
 
 void mediaplayer_save (XfcePanelPlugin *plugin, MediaplayerPlugin *mp);

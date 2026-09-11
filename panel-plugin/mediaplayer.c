@@ -138,15 +138,52 @@ build_tooltip (MediaplayerPlugin *mp)
   return result;
 }
 
+static void mediaplayer_update_art (MediaplayerPlugin *mp, gboolean active, const gchar *art_url);
+
+static gboolean
+mediaplayer_art_grace_timeout (MediaplayerPlugin *mp)
+{
+  mp->art_grace_timer_id = 0;
+  mp->has_last_art = FALSE;
+  mediaplayer_update_art (mp, mediaplayer_mpris_has_active_player (mp->mpris),
+                           mediaplayer_mpris_get_art_url (mp->mpris));
+  return G_SOURCE_REMOVE;
+}
+
 static void
 mediaplayer_update_art (MediaplayerPlugin *mp, gboolean active, const gchar *art_url)
 {
   gint panel_size = xfce_panel_plugin_get_size (mp->plugin);
-  gboolean want_art = mp->show_album_art && active && art_url != NULL &&
-                       panel_size >= MEDIAPLAYER_ART_MIN_PANEL_SIZE;
+  gboolean art_allowed = mp->show_album_art && panel_size >= MEDIAPLAYER_ART_MIN_PANEL_SIZE;
+  gboolean has_art = art_allowed && active && art_url != NULL;
 
-  if (!want_art)
+  if (!art_allowed)
     {
+      gtk_widget_hide (mp->img_art);
+      return;
+    }
+
+  if (has_art)
+    {
+      mp->has_last_art = TRUE;
+
+      if (mp->art_grace_timer_id != 0)
+        {
+          g_source_remove (mp->art_grace_timer_id);
+          mp->art_grace_timer_id = 0;
+        }
+    }
+  else if (mp->has_last_art && mp->art_grace_timer_id == 0)
+    {
+      mp->art_grace_timer_id = g_timeout_add_seconds (MEDIAPLAYER_NO_PLAYER_GRACE_SECONDS,
+                                                        (GSourceFunc) mediaplayer_art_grace_timeout, mp);
+    }
+
+  if (!has_art)
+    {
+      if (mp->has_last_art)
+        return; /* momentary gap: keep showing the last art */
+
       gtk_widget_hide (mp->img_art);
       return;
     }
@@ -212,17 +249,80 @@ mediaplayer_progress_tick (MediaplayerPlugin *mp)
   return G_SOURCE_CONTINUE;
 }
 
+static gboolean
+mediaplayer_progress_grace_timeout (MediaplayerPlugin *mp)
+{
+  mp->progress_grace_timer_id = 0;
+  mp->has_last_progress = FALSE;
+  mediaplayer_update_progress (mp);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 mediaplayer_update_progress (MediaplayerPlugin *mp)
 {
-  gboolean active = mediaplayer_mpris_has_active_player (mp->mpris);
-  MediaplayerStatus status = mediaplayer_mpris_get_status (mp->mpris);
-  gint64 length = mediaplayer_mpris_get_length (mp->mpris);
-  /* the bar is now just the background of the text row (an overlay
-   * child costs no extra height), so both share one condition. */
-  gboolean want_time = mp->show_progress && active && length > 0;
+  gboolean active;
+  MediaplayerStatus status;
+  gint64 length;
+  gboolean has_length;
 
-  if (want_time)
+  if (!mp->show_progress)
+    {
+      /* disabled by the user: hide immediately and drop any pending
+       * grace state. Grace is only meant to smooth over a real,
+       * momentary gap in the player's own data (folded into
+       * has_length below) -- it must never kick in for a deliberate
+       * setting change, or toggling this off would appear to do
+       * nothing for the next few seconds. */
+      mp->has_last_progress = FALSE;
+
+      if (mp->progress_grace_timer_id != 0)
+        {
+          g_source_remove (mp->progress_grace_timer_id);
+          mp->progress_grace_timer_id = 0;
+        }
+
+      if (mp->progress_timer_id != 0)
+        {
+          g_source_remove (mp->progress_timer_id);
+          mp->progress_timer_id = 0;
+        }
+
+      gtk_widget_hide (mp->progress_label);
+      gtk_widget_set_opacity (mp->progress_bar, 0.0);
+      return;
+    }
+
+  active = mediaplayer_mpris_has_active_player (mp->mpris);
+  status = mediaplayer_mpris_get_status (mp->mpris);
+  length = mediaplayer_mpris_get_length (mp->mpris);
+  has_length = active && length > 0;
+
+  /* this runs both from mediaplayer_update_ui() and from the
+   * once-a-second tick below while playing, so the grace state has to
+   * live (and be checked) right here rather than at the call sites --
+   * a poll landing mid-gap must see the same frozen state a change
+   * notification would. */
+  if (has_length)
+    {
+      mp->has_last_progress = TRUE;
+
+      if (mp->progress_grace_timer_id != 0)
+        {
+          g_source_remove (mp->progress_grace_timer_id);
+          mp->progress_grace_timer_id = 0;
+        }
+    }
+  else if (mp->has_last_progress && mp->progress_grace_timer_id == 0)
+    {
+      mp->progress_grace_timer_id = g_timeout_add_seconds (MEDIAPLAYER_NO_PLAYER_GRACE_SECONDS,
+                                                             (GSourceFunc) mediaplayer_progress_grace_timeout, mp);
+    }
+
+  if (!has_length && mp->has_last_progress)
+    return; /* momentary gap: keep showing the last position/duration */
+
+  if (has_length)
     {
       gint64 position = mediaplayer_mpris_get_position (mp->mpris);
       gdouble fraction;
@@ -257,7 +357,7 @@ mediaplayer_update_progress (MediaplayerPlugin *mp)
   /* only poll while actually playing and visible: a paused/stopped
    * position doesn't move, and there is no point querying D-Bus once
    * a second for indicators nobody can see. */
-  if (want_time && status == MEDIAPLAYER_STATUS_PLAYING)
+  if (has_length && status == MEDIAPLAYER_STATUS_PLAYING)
     {
       if (mp->progress_timer_id == 0)
         mp->progress_timer_id = g_timeout_add_seconds (1, (GSourceFunc) mediaplayer_progress_tick, mp);
@@ -276,6 +376,7 @@ static gboolean
 mediaplayer_no_player_timeout (MediaplayerPlugin *mp)
 {
   mp->no_player_timer_id = 0;
+  mp->has_last_text = FALSE;
   g_clear_pointer (&mp->last_label_text, g_free);
   mediaplayer_update_ui (mp);
   return G_SOURCE_REMOVE;
@@ -291,8 +392,30 @@ mediaplayer_update_ui (MediaplayerPlugin *mp)
   const gchar *album = mediaplayer_mpris_get_album (mp->mpris);
   const gchar *art_url = mediaplayer_mpris_get_art_url (mp->mpris);
   gboolean show_any = mp->show_title || mp->show_artist || mp->show_album;
+  gboolean has_text_data = active && (title != NULL || artist != NULL || album != NULL);
   gchar *tooltip;
   gchar *label_text;
+
+  /* text gets its own grace period before going blank on a momentary
+   * gap (e.g. the brief moment between tracks while Previous/Next is
+   * still being processed); art and progress track the same kind of
+   * gap independently, inside their own update functions below. */
+
+  if (has_text_data)
+    {
+      mp->has_last_text = TRUE;
+
+      if (mp->no_player_timer_id != 0)
+        {
+          g_source_remove (mp->no_player_timer_id);
+          mp->no_player_timer_id = 0;
+        }
+    }
+  else if (mp->has_last_text && mp->no_player_timer_id == 0)
+    {
+      mp->no_player_timer_id = g_timeout_add_seconds (MEDIAPLAYER_NO_PLAYER_GRACE_SECONDS,
+                                                        (GSourceFunc) mediaplayer_no_player_timeout, mp);
+    }
 
   mediaplayer_update_art (mp, active, art_url);
   mediaplayer_update_progress (mp);
@@ -308,31 +431,31 @@ mediaplayer_update_ui (MediaplayerPlugin *mp)
 
   if (show_any)
     {
-      GPtrArray *parts = g_ptr_array_new ();
-
-      if (active)
+      if (has_text_data)
         {
+          GPtrArray *parts = g_ptr_array_new ();
+
           if (mp->show_artist && artist != NULL)
             g_ptr_array_add (parts, (gpointer) artist);
           if (mp->show_title && title != NULL)
             g_ptr_array_add (parts, (gpointer) title);
           if (mp->show_album && album != NULL)
             g_ptr_array_add (parts, (gpointer) album);
-        }
 
-      if (parts->len > 0)
-        {
-          g_ptr_array_add (parts, NULL);
-          label_text = g_strjoinv (" \xe2\x80\x93 ", (gchar **) parts->pdata);
-
-          g_free (mp->last_label_text);
-          mp->last_label_text = g_strdup (label_text);
-
-          if (mp->no_player_timer_id != 0)
+          if (parts->len > 0)
             {
-              g_source_remove (mp->no_player_timer_id);
-              mp->no_player_timer_id = 0;
+              g_ptr_array_add (parts, NULL);
+              label_text = g_strjoinv (" \xe2\x80\x93 ", (gchar **) parts->pdata);
+
+              g_free (mp->last_label_text);
+              mp->last_label_text = g_strdup (label_text);
             }
+          else
+            {
+              label_text = g_strdup ("No player");
+            }
+
+          g_ptr_array_free (parts, TRUE);
         }
       else if (mp->last_label_text != NULL)
         {
@@ -341,17 +464,11 @@ mediaplayer_update_ui (MediaplayerPlugin *mp)
            * short grace period instead of immediately flashing
            * "No player". */
           label_text = g_strdup (mp->last_label_text);
-
-          if (mp->no_player_timer_id == 0)
-            mp->no_player_timer_id = g_timeout_add_seconds (MEDIAPLAYER_NO_PLAYER_GRACE_SECONDS,
-                                                              (GSourceFunc) mediaplayer_no_player_timeout, mp);
         }
       else
         {
           label_text = g_strdup ("No player");
         }
-
-      g_ptr_array_free (parts, TRUE);
 
       gtk_label_set_text (GTK_LABEL (mp->label), label_text);
       gtk_widget_set_visible (mp->label, TRUE);
@@ -392,6 +509,69 @@ next_clicked_cb (GtkButton *button, MediaplayerPlugin *mp)
   mediaplayer_mpris_next (mp->mpris);
 }
 
+static gboolean
+info_button_press_cb (GtkWidget *widget, GdkEventButton *event, MediaplayerPlugin *mp)
+{
+  if (event->button != GDK_BUTTON_PRIMARY)
+    return GDK_EVENT_PROPAGATE;
+
+  mediaplayer_mpris_play_pause (mp->mpris);
+
+  return GDK_EVENT_STOP;
+}
+
+static void
+info_ebox_realize_cb (GtkWidget *widget, gpointer user_data)
+{
+  GdkWindow *window = gtk_widget_get_window (widget);
+  GdkCursor *cursor;
+
+  if (window == NULL)
+    return;
+
+  cursor = gdk_cursor_new_from_name (gtk_widget_get_display (widget), "pointer");
+  if (cursor != NULL)
+    {
+      gdk_window_set_cursor (window, cursor);
+      g_object_unref (cursor);
+    }
+}
+
+static gboolean
+art_query_tooltip_cb (GtkWidget *widget, gint x, gint y, gboolean keyboard_mode,
+                       GtkTooltip *tooltip, MediaplayerPlugin *mp)
+{
+  const gchar *art_url = mediaplayer_mpris_get_art_url (mp->mpris);
+  gchar *path;
+  GdkPixbuf *pixbuf;
+  GError *error = NULL;
+
+  if (art_url == NULL)
+    return FALSE;
+
+  path = g_filename_from_uri (art_url, NULL, &error);
+  if (path == NULL)
+    {
+      g_clear_error (&error);
+      return FALSE;
+    }
+
+  /* re-decode from the source rather than reusing the small panel
+   * pixbuf, so the preview is as sharp as the source art allows. */
+  pixbuf = gdk_pixbuf_new_from_file_at_scale (path, MEDIAPLAYER_ART_PREVIEW_SIZE,
+                                               MEDIAPLAYER_ART_PREVIEW_SIZE, TRUE, &error);
+  g_free (path);
+  g_clear_error (&error);
+
+  if (pixbuf == NULL)
+    return FALSE;
+
+  gtk_tooltip_set_icon (tooltip, pixbuf);
+  g_object_unref (pixbuf);
+
+  return TRUE;
+}
+
 static GtkWidget *
 create_button (const gchar *icon_name, GCallback callback, MediaplayerPlugin *mp, GtkWidget **image_out)
 {
@@ -416,30 +596,58 @@ create_button (const gchar *icon_name, GCallback callback, MediaplayerPlugin *mp
 static void
 mediaplayer_update_bar_contrast (MediaplayerPlugin *mp)
 {
-  /* "opposite of the text color" turned out to be a bad target for
-   * the bar itself: themes pick text color to contrast the *panel*
-   * background, so its opposite approximates that same background --
-   * exactly what the bar then blended into. Two separate problems,
-   * two separate fixes: leave the filled portion in the theme's own
-   * accent color (that's what it's designed to stand out against a
-   * panel background in any theme), only tint the empty trough so
-   * the bar's outline is visible; and make the *text* legible against
-   * whatever ends up behind it with a shadow/halo in the opposite
-   * shade, rather than trying to pick one bar color that satisfies
-   * both the panel-background contrast and the text-contrast need at
-   * once. */
+  /* using the theme's own accent color for the fill as-is turned out
+   * to be too low-contrast in both directions: too dark against a
+   * dark panel, and (per the theme actually in use here) still not
+   * enough against the label's own near-black text despite the
+   * text's halo. Rather than falling back to a fixed color (losing
+   * the theme's own hue entirely), look up its accent color and
+   * lighten it -- keeping it recognizably the theme's own blue/green/
+   * whatever, just brighter -- on a light panel; a dark panel instead
+   * gets a plain, guaranteed-visible white, since lightening further
+   * wouldn't help there and white is already about as bright as it
+   * gets. The trough itself (the progress row's own background,
+   * spanning its full width regardless of playback position) stays
+   * fully transparent either way, so the row reads as plain panel
+   * background everywhere the fill hasn't reached yet -- only the
+   * fill is "the bar". The text still needs a shadow/halo to stay
+   * legible wherever it crosses that fill, in the *opposite* shade of
+   * its own color. */
   GtkStyleContext *label_context;
   GdkRGBA text_color;
+  GdkRGBA accent_color = { 0.20, 0.51, 0.85, 1.0 }; /* fallback if the theme defines no accent color */
   gdouble luminance;
-  gint shade;
+  gint text_shadow_shade;
+  gboolean dark_panel;
+  gchar *fill_override_css;
   gchar *bar_css;
   gchar *text_css;
 
   label_context = gtk_widget_get_style_context (mp->label);
   gtk_style_context_get_color (label_context, gtk_style_context_get_state (label_context), &text_color);
+  gtk_style_context_lookup_color (label_context, "theme_selected_bg_color", &accent_color);
 
   luminance = 0.2126 * text_color.red + 0.7152 * text_color.green + 0.0722 * text_color.blue;
-  shade = luminance > 0.5 ? 0 : 255;
+  text_shadow_shade = luminance > 0.5 ? 0 : 255;
+  dark_panel = luminance > 0.5;
+
+  if (dark_panel)
+    {
+      fill_override_css = g_strdup ("progressbar > trough > progress { background-color: rgba(255,255,255,0.75); }");
+    }
+  else
+    {
+      /* blend the accent color a third of the way toward white, to
+       * lift it clear of dark label text without washing out its
+       * hue. */
+      const gdouble lighten = 0.35;
+      gint r = (gint) CLAMP ((accent_color.red   * (1.0 - lighten) + lighten) * 255.0, 0, 255);
+      gint g = (gint) CLAMP ((accent_color.green * (1.0 - lighten) + lighten) * 255.0, 0, 255);
+      gint b = (gint) CLAMP ((accent_color.blue  * (1.0 - lighten) + lighten) * 255.0, 0, 255);
+
+      fill_override_css = g_strdup_printf (
+        "progressbar > trough > progress { background-color: rgb(%d,%d,%d); }", r, g, b);
+    }
 
   bar_css = g_strdup_printf (
     "progressbar, progressbar > trough, progressbar > trough > progress {"
@@ -449,17 +657,21 @@ mediaplayer_update_bar_contrast (MediaplayerPlugin *mp)
     "  border-radius: 4px;"
     "  background-image: none;"
     "}"
-    "progressbar > trough {"
-    "  background-color: rgba(%d,%d,%d,0.22);"
-    "}",
+    "progressbar, progressbar > trough {"
+    "  background-color: transparent;"
+    "}"
+    "%s",
     MEDIAPLAYER_PROGRESS_BAR_HEIGHT,
-    shade, shade, shade);
+    fill_override_css);
+
+  g_free (fill_override_css);
 
   text_css = g_strdup_printf (
     "label {"
     "  text-shadow: 0 0 3px rgba(%d,%d,%d,0.9), 0 0 3px rgba(%d,%d,%d,0.9);"
     "}",
-    shade, shade, shade, shade, shade, shade);
+    text_shadow_shade, text_shadow_shade, text_shadow_shade,
+    text_shadow_shade, text_shadow_shade, text_shadow_shade);
 
   if (mp->bar_css_provider != NULL)
     {
@@ -553,6 +765,12 @@ mediaplayer_free_data (XfcePanelPlugin *plugin, MediaplayerPlugin *mp)
   if (mp->no_player_timer_id != 0)
     g_source_remove (mp->no_player_timer_id);
 
+  if (mp->art_grace_timer_id != 0)
+    g_source_remove (mp->art_grace_timer_id);
+
+  if (mp->progress_grace_timer_id != 0)
+    g_source_remove (mp->progress_grace_timer_id);
+
   if (mp->mpris != NULL)
     g_object_unref (mp->mpris);
 
@@ -614,6 +832,11 @@ mediaplayer_construct (XfcePanelPlugin *plugin)
   gtk_widget_set_no_show_all (mp->img_art, TRUE);
   gtk_box_pack_start (GTK_BOX (mp->box), mp->img_art, FALSE, FALSE, 0);
 
+  /* an enlarged preview of the current art, shown as a hover tooltip
+   * on the small panel-sized image. */
+  gtk_widget_set_has_tooltip (mp->img_art, TRUE);
+  g_signal_connect (mp->img_art, "query-tooltip", G_CALLBACK (art_query_tooltip_cb), mp);
+
   /* the progress bar sits as the overlay's base child (a background
    * wash for the row), with the label/time row floating on top of it
    * -- GtkLabel has no background of its own, so the text reads
@@ -633,7 +856,18 @@ mediaplayer_construct (XfcePanelPlugin *plugin)
   gtk_widget_set_halign (mp->info_row, GTK_ALIGN_FILL);
   gtk_widget_set_valign (mp->info_row, GTK_ALIGN_FILL);
   gtk_widget_show (mp->info_row);
-  gtk_overlay_add_overlay (GTK_OVERLAY (mp->text_box), mp->info_row);
+
+  /* wrapped in its own event box (rather than reusing mp->ebox) so
+   * clicking the text/time toggles playback without the whole
+   * plugin -- buttons and art included -- reacting to a left click. */
+  mp->info_ebox = gtk_event_box_new ();
+  gtk_widget_set_halign (mp->info_ebox, GTK_ALIGN_FILL);
+  gtk_widget_set_valign (mp->info_ebox, GTK_ALIGN_FILL);
+  gtk_widget_show (mp->info_ebox);
+  gtk_container_add (GTK_CONTAINER (mp->info_ebox), mp->info_row);
+  g_signal_connect (mp->info_ebox, "button-press-event", G_CALLBACK (info_button_press_cb), mp);
+  g_signal_connect (mp->info_ebox, "realize", G_CALLBACK (info_ebox_realize_cb), NULL);
+  gtk_overlay_add_overlay (GTK_OVERLAY (mp->text_box), mp->info_ebox);
 
   mp->label = gtk_label_new (NULL);
   gtk_label_set_ellipsize (GTK_LABEL (mp->label), PANGO_ELLIPSIZE_END);
