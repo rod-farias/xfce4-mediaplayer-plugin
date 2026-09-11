@@ -1,3 +1,17 @@
+xfce4-mediaplayer-plugin (0.2.0-1) unstable; urgency=medium
+
+  * Give album art and the progress/time indicator their own grace
+    period on a momentary MPRIS metadata gap, independent of the
+    track text's, so neither flashes empty during track changes.
+  * Fix the progress bar's theme coloring so the fill has real
+    contrast against both light and dark panels.
+  * Hide the progress bar immediately when disabled in preferences,
+    instead of after a few seconds.
+  * Add click-to-play/pause on the track text and an enlarged album
+    art preview on hover.
+
+ -- Rodrigo <rodrigo@ffr.cl>  Fri, 11 Sep 2026 19:03:28 -0300
+
 xfce4-mediaplayer-plugin (0.1.0-1) unstable; urgency=medium
 
   * Initial packaging.
