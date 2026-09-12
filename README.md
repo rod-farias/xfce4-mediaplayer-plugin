@@ -15,11 +15,21 @@ Xfce panel plugin that controls music playback over **MPRIS/D-Bus**. It works wi
 
 ## Installation
 
-- There is a [.deb package](https://github.com/rod-farias/xfce4-mediaplayer-plugin/releases) for Xfce 4.20 on Ubuntu 26.04; it is not guaranteed to install correctly on other combinations.
+- There is a [.deb package](https://github.com/rod-farias/xfce4-mediaplayer-plugin/releases) for Xfce 4.20 on Ubuntu 26.04. Download the latest version release and then install with
+```bash
+sudo apt install ../xfce4-mediaplayer-plugin_<version>_amd64.deb
+```
 - For other distributions: clone the repository, install the dependencies, and build with `make` as detailed [here](docs/DETAILS.md#building-and-installing).
 
-Then right-click the panel → Panel → Add New Items… and add
-"Media Player".
+### After installing
+
+Restart the panel:
+
+```bash
+xfce4-panel -r
+```
+
+Then right-click the panel → **Panel** → **Add New Items…** and add "Media Player".
 
 ## Screenshots
 
