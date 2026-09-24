@@ -8,6 +8,18 @@
 #define MPRIS_PLAYER_IFACE    "org.mpris.MediaPlayer2.Player"
 #define DBUS_PROPERTIES_IFACE "org.freedesktop.DBus.Properties"
 
+/* playerctld is a proxy that re-publishes whichever real player was
+ * last active, so listing it would only duplicate that player. */
+#define MPRIS_PLAYERCTLD_NAME MPRIS_PREFIX "playerctld"
+
+/* Chromium/Electron's built-in media session service. Electron apps
+ * (e.g. tidal-hifi) often publish their own MPRIS service from the same
+ * process as well, and those hand-rolled ones tend to be less reliable
+ * (tidal-hifi's can freeze length/position at the previous track's end
+ * while the title moves on), so when both come from one process the
+ * Chromium one wins in automatic selection. */
+#define MPRIS_CHROMIUM_PREFIX MPRIS_PREFIX "chromium.instance"
+
 enum
 {
   SIGNAL_CHANGED,
@@ -49,7 +61,43 @@ static void mediaplayer_mpris_subscribe_active_player (MediaplayerMpris *mpris);
 static gboolean
 bus_name_is_mpris_player (const gchar *name)
 {
-  return name != NULL && g_str_has_prefix (name, MPRIS_PREFIX);
+  return name != NULL &&
+         g_str_has_prefix (name, MPRIS_PREFIX) &&
+         g_strcmp0 (name, MPRIS_PLAYERCTLD_NAME) != 0;
+}
+
+gchar *
+mediaplayer_mpris_player_base_name (const gchar *bus_name)
+{
+  const gchar *suffix;
+  const gchar *p;
+
+  if (bus_name == NULL)
+    return NULL;
+
+  /* per the MPRIS spec, multi-instance players append ".instance<pid>" */
+  suffix = g_strrstr (bus_name, ".instance");
+  if (suffix == NULL || suffix[strlen (".instance")] == '\0')
+    return g_strdup (bus_name);
+
+  for (p = suffix + strlen (".instance"); *p != '\0'; p++)
+    {
+      if (!g_ascii_isdigit (*p))
+        return g_strdup (bus_name);
+    }
+
+  return g_strndup (bus_name, suffix - bus_name);
+}
+
+static gboolean
+player_matches_base_name (const gchar *bus_name, const gchar *base_name)
+{
+  gchar *base = mediaplayer_mpris_player_base_name (bus_name);
+  gboolean result = g_strcmp0 (base, base_name) == 0;
+
+  g_free (base);
+
+  return result;
 }
 
 static gint
@@ -327,16 +375,101 @@ query_playback_status (MediaplayerMpris *mpris, const gchar *bus_name)
   return result;
 }
 
+static guint32
+query_player_pid (MediaplayerMpris *mpris, const gchar *bus_name)
+{
+  GVariant *reply;
+  guint32 pid = 0;
+  GError *error = NULL;
+
+  reply = g_dbus_connection_call_sync (mpris->connection,
+                                        "org.freedesktop.DBus",
+                                        "/org/freedesktop/DBus",
+                                        "org.freedesktop.DBus",
+                                        "GetConnectionUnixProcessID",
+                                        g_variant_new ("(s)", bus_name),
+                                        G_VARIANT_TYPE ("(u)"),
+                                        G_DBUS_CALL_FLAGS_NONE,
+                                        1000,
+                                        NULL,
+                                        &error);
+
+  if (reply == NULL)
+    {
+      g_debug ("mediaplayer: could not query PID for %s: %s", bus_name, error->message);
+      g_clear_error (&error);
+      return 0;
+    }
+
+  g_variant_get (reply, "(u)", &pid);
+  g_variant_unref (reply);
+
+  return pid;
+}
+
+/* TRUE if @bus_name is an app's own MPRIS service and the same process
+ * also publishes a Chromium media session service, which is preferred
+ * (see MPRIS_CHROMIUM_PREFIX). */
+static gboolean
+player_is_shadowed (MediaplayerMpris *mpris, const gchar *bus_name)
+{
+  guint32 pid = 0;
+  guint i;
+
+  if (g_str_has_prefix (bus_name, MPRIS_CHROMIUM_PREFIX))
+    return FALSE;
+
+  for (i = 0; i < mpris->known_players->len; i++)
+    {
+      const gchar *other = g_ptr_array_index (mpris->known_players, i);
+
+      if (!g_str_has_prefix (other, MPRIS_CHROMIUM_PREFIX))
+        continue;
+
+      if (pid == 0)
+        {
+          pid = query_player_pid (mpris, bus_name);
+          if (pid == 0)
+            return FALSE;
+        }
+
+      if (query_player_pid (mpris, other) == pid)
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
+static const gchar *
+find_preferred_player (MediaplayerMpris *mpris)
+{
+  guint i;
+
+  if (mpris->preferred_player == NULL)
+    return NULL;
+
+  for (i = 0; i < mpris->known_players->len; i++)
+    {
+      const gchar *candidate = g_ptr_array_index (mpris->known_players, i);
+
+      if (player_matches_base_name (candidate, mpris->preferred_player))
+        return candidate;
+    }
+
+  return NULL;
+}
+
 static void
 mediaplayer_mpris_select_active_player (MediaplayerMpris *mpris)
 {
   gchar *new_active = NULL;
+  const gchar *preferred = find_preferred_player (mpris);
+  const gchar *fallback = NULL;
   guint i;
 
-  if (mpris->preferred_player != NULL &&
-      find_player (mpris->known_players, mpris->preferred_player) >= 0)
+  if (preferred != NULL)
     {
-      new_active = g_strdup (mpris->preferred_player);
+      new_active = g_strdup (preferred);
     }
   else
     {
@@ -345,6 +478,12 @@ mediaplayer_mpris_select_active_player (MediaplayerMpris *mpris)
         {
           const gchar *candidate = g_ptr_array_index (mpris->known_players, i);
 
+          if (player_is_shadowed (mpris, candidate))
+            continue;
+
+          if (fallback == NULL)
+            fallback = candidate;
+
           if (query_playback_status (mpris, candidate) == MEDIAPLAYER_STATUS_PLAYING)
             {
               new_active = g_strdup (candidate);
@@ -352,8 +491,8 @@ mediaplayer_mpris_select_active_player (MediaplayerMpris *mpris)
             }
         }
 
-      if (new_active == NULL && mpris->known_players->len > 0)
-        new_active = g_strdup (g_ptr_array_index (mpris->known_players, 0));
+      if (new_active == NULL && fallback != NULL)
+        new_active = g_strdup (fallback);
     }
 
   if (g_strcmp0 (new_active, mpris->active_player) != 0)
@@ -485,8 +624,10 @@ mediaplayer_mpris_set_preferred_player (MediaplayerMpris *mpris, const gchar *bu
 {
   g_return_if_fail (MEDIAPLAYER_IS_MPRIS (mpris));
 
+  /* stored without any ".instance<pid>" suffix, so the choice keeps
+   * matching after the player restarts under a new PID */
   g_free (mpris->preferred_player);
-  mpris->preferred_player = (bus_name != NULL && *bus_name != '\0') ? g_strdup (bus_name) : NULL;
+  mpris->preferred_player = (bus_name != NULL && *bus_name != '\0') ? mediaplayer_mpris_player_base_name (bus_name) : NULL;
 
   mediaplayer_mpris_select_active_player (mpris);
 }
@@ -496,6 +637,47 @@ mediaplayer_mpris_get_preferred_player (MediaplayerMpris *mpris)
 {
   g_return_val_if_fail (MEDIAPLAYER_IS_MPRIS (mpris), NULL);
   return mpris->preferred_player;
+}
+
+gchar *
+mediaplayer_mpris_get_player_identity (MediaplayerMpris *mpris, const gchar *bus_name)
+{
+  GVariant *reply;
+  GVariant *v;
+  gchar *result = NULL;
+  GError *error = NULL;
+
+  g_return_val_if_fail (MEDIAPLAYER_IS_MPRIS (mpris), NULL);
+
+  if (mpris->connection == NULL || bus_name == NULL)
+    return NULL;
+
+  reply = g_dbus_connection_call_sync (mpris->connection,
+                                        bus_name,
+                                        MPRIS_OBJECT_PATH,
+                                        DBUS_PROPERTIES_IFACE,
+                                        "Get",
+                                        g_variant_new ("(ss)", "org.mpris.MediaPlayer2", "Identity"),
+                                        G_VARIANT_TYPE ("(v)"),
+                                        G_DBUS_CALL_FLAGS_NONE,
+                                        1000,
+                                        NULL,
+                                        &error);
+
+  if (reply == NULL)
+    {
+      g_debug ("mediaplayer: could not query Identity for %s: %s", bus_name, error->message);
+      g_clear_error (&error);
+      return NULL;
+    }
+
+  g_variant_get (reply, "(v)", &v);
+  if (g_variant_is_of_type (v, G_VARIANT_TYPE_STRING) && *g_variant_get_string (v, NULL) != '\0')
+    result = g_variant_dup_string (v, NULL);
+  g_variant_unref (v);
+  g_variant_unref (reply);
+
+  return result;
 }
 
 GList *

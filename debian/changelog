@@ -1,3 +1,9 @@
+xfce4-mediaplayer-plugin (0.2.1-1) unstable; urgency=medium
+
+  * Fix progress/time frozen after track change with tidal-hifi.
+
+ -- Rodrigo <rodrigo@ffr.cl>  Thu, 24 Sep 2026 09:09:42 -0300
+
 xfce4-mediaplayer-plugin (0.2.0-1) unstable; urgency=medium
 
   * Give album art and the progress/time indicator their own grace

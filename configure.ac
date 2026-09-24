@@ -1,7 +1,7 @@
 dnl configure.ac for xfce4-mediaplayer-plugin
 
 AC_PREREQ([2.69])
-AC_INIT([xfce4-mediaplayer-plugin], [0.2.0], [https://github.com/], [xfce4-mediaplayer-plugin])
+AC_INIT([xfce4-mediaplayer-plugin], [0.2.1], [https://github.com/], [xfce4-mediaplayer-plugin])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([1.11 no-dist-gzip dist-bzip2 tar-ustar foreign])

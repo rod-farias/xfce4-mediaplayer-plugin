@@ -34,7 +34,8 @@ required.
   for the playback controls (left or right of the text).
 - Preferred player selection (or automatic: whichever MPRIS player is
   currently playing), from a dropdown of the players currently on the
-  session bus.
+  session bus. `playerctld` is skipped, and if an app also publishes
+  Chromium's MPRIS service, that one is preferred.
 - Brief tolerance for metadata gaps: if a player momentarily reports no
   track info (e.g. the instant between two tracks), the previous
   track's text is kept on screen for a few seconds instead of

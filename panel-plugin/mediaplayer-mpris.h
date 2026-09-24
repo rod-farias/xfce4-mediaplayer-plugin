@@ -20,7 +20,17 @@ MediaplayerMpris *mediaplayer_mpris_new (void);
 void mediaplayer_mpris_set_preferred_player (MediaplayerMpris *mpris,
                                               const gchar      *bus_name);
 
+/* preferred player, as a bus name without any ".instance<pid>" suffix */
 const gchar *mediaplayer_mpris_get_preferred_player (MediaplayerMpris *mpris);
+
+/* @bus_name with any MPRIS ".instance<pid>" suffix removed, so it stays
+ * the same across player restarts. Free with g_free(). */
+gchar *mediaplayer_mpris_player_base_name (const gchar *bus_name);
+
+/* the player's human-readable Identity (org.mpris.MediaPlayer2), or
+ * NULL if it does not provide one. Free with g_free(). */
+gchar *mediaplayer_mpris_get_player_identity (MediaplayerMpris *mpris,
+                                              const gchar      *bus_name);
 
 /* Names (well-known org.mpris.MediaPlayer2.* bus names) of players
  * currently available on the session bus. Free the returned list

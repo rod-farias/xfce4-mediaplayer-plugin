@@ -15,15 +15,30 @@ typedef struct
   GtkWidget          *position_combo;
 } DialogWidgets;
 
+/* @base_name is the bus name without its ".instance<pid>" suffix. The
+ * player's own Identity is shown when it has one, followed by the bus
+ * name: a single app can publish several services (e.g. tidal-hifi's
+ * own plus Chromium's), and the Identity alone would not tell them
+ * apart. */
 static gchar *
-friendly_player_name (const gchar *bus_name)
+friendly_player_name (MediaplayerMpris *mpris, const gchar *bus_name, const gchar *base_name)
 {
-  const gchar *short_name = bus_name + strlen ("org.mpris.MediaPlayer2.");
+  const gchar *short_name = base_name + strlen ("org.mpris.MediaPlayer2.");
+  gchar *identity;
+  gchar *result;
 
   if (short_name[0] == '\0')
     return g_strdup (bus_name);
 
-  return g_strdup_printf ("%c%s", g_ascii_toupper (short_name[0]), short_name + 1);
+  identity = mediaplayer_mpris_get_player_identity (mpris, bus_name);
+  if (identity != NULL)
+    result = g_strdup_printf ("%s (%s)", identity, short_name);
+  else
+    result = g_strdup_printf ("%c%s", g_ascii_toupper (short_name[0]), short_name + 1);
+
+  g_free (identity);
+
+  return result;
 }
 
 static void
@@ -119,6 +134,7 @@ mediaplayer_dialogs_show (XfcePanelPlugin *plugin, MediaplayerPlugin *mp)
   GtkWidget *check_art;
   GtkWidget *check_progress;
   GList *players, *iter;
+  GHashTable *seen;
   const gchar *preferred;
   DialogWidgets *dw;
 
@@ -152,16 +168,29 @@ mediaplayer_dialogs_show (XfcePanelPlugin *plugin, MediaplayerPlugin *mp)
   combo = gtk_combo_box_text_new ();
   gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (combo), "", "Auto (currently playing)");
 
+  /* entries are keyed by base name (what gets saved), so several
+   * instances of one multi-instance player collapse into one entry */
+  seen = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   players = mediaplayer_mpris_list_players (mp->mpris);
   for (iter = players; iter != NULL; iter = iter->next)
     {
       const gchar *bus_name = iter->data;
-      gchar *display = friendly_player_name (bus_name);
+      gchar *base_name = mediaplayer_mpris_player_base_name (bus_name);
+      gchar *display;
 
-      gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (combo), bus_name, display);
+      if (g_hash_table_contains (seen, base_name))
+        {
+          g_free (base_name);
+          continue;
+        }
+
+      display = friendly_player_name (mp->mpris, bus_name, base_name);
+      gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (combo), base_name, display);
       g_free (display);
+      g_hash_table_add (seen, base_name);
     }
   g_list_free_full (players, g_free);
+  g_hash_table_unref (seen);
 
   preferred = mediaplayer_mpris_get_preferred_player (mp->mpris);
   gtk_combo_box_set_active_id (GTK_COMBO_BOX (combo), preferred != NULL ? preferred : "");

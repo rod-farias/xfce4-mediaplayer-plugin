@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 2026-09-24
+
+- Fixed progress/time staying frozen after a track change with tidal-hifi: Chromium's MPRIS service is now preferred, and playerctld is skipped.
+
 ## [0.2.0] - 2026-09-11
 
 ### Fixes and improvements
